@@ -1,0 +1,17 @@
+{
+    "ebooks": {
+        "save_path": "/data/torrents/books"
+    },
+    "games": {
+        "save_path": "/data/torrents/games"
+    },
+    "movies": {
+        "save_path": "/data/torrents/movies"
+    },
+    "tv": {
+        "save_path": "/data/torrents/tv"
+    },
+    "music": {
+        "save_path": "/data/torrents/music"
+    }
+}

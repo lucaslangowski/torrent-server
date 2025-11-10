@@ -1,0 +1,312 @@
+name: torrent-server
+services:
+  gluetun:
+    image: qmcgaw/gluetun:v3.40 # Latest tag = development. Always use version number for gluetun
+    container_name: gluetun
+    hostname: gluetun
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 150M
+        reservations:
+          cpus: '0.25'
+          memory: 100M
+    healthcheck:
+      test: wget --no-verbose --tries=3 http://127.0.0.1:9999 || exit 1
+      start_period: 60s
+      timeout: 10s
+      interval: 30s
+      retries: 5
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    volumes:
+      - gluetun_volume:/gluetun
+      - ./files/gluetun/config.toml:/gluetun/auth/config.toml # Expose API endpoints
+    environment:
+      - TZ=${TIMEZONE}
+      - VPN_SERVICE_PROVIDER=protonvpn       # ProtonVPN only config - check gluetun wiki
+      - VPN_TYPE=openvpn                     #
+      - OPENVPN_USER=${OPENVPN_USER}         #
+      - OPENVPN_PASSWORD=${OPENVPN_PASSWORD} #
+      - PORT_FORWARD_ONLY=on                 #
+      - SERVER_COUNTRIES=Netherlands         #
+      - UPDATER_PERIOD=12h
+      # variables below are only useful when using port forwarding
+      - VPN_PORT_FORWARDING=on
+      - VPN_PORT_FORWARDING_UP_COMMAND=/bin/sh -c 'wget -O- --retry-connrefused --post-data "json={\"listen_port\":{{PORTS}}}" http://localhost:20216/api/v2/app/setPreferences 2>&1'
+
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:5.1.2
+    container_name: qbittorrent
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 300M
+        reservations:
+          cpus: '0.25'
+          memory: 150M
+    healthcheck:
+      test: curl -sSf http://localhost:20216/api/v2/app/webapiVersion || exit 1
+      start_period: 60s
+      timeout: 10s
+      interval: 30s
+      retries: 5
+    volumes:
+      - qbittorrent_config:/config
+      - ${PATH_TO_DATA}/torrents:/data/torrents
+      - ./files/qbittorrent/qBittorrent.conf:/config/qBittorrent/qBittorrent.conf
+      - ./files/qbittorrent/vuetorrent:/vuetorrent # Custom UI (mobile friendly)
+      - ./files/qbittorrent/categories.json:/config/qBittorrent/categories.json # Custom save paths for categories
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=${TIMEZONE}
+      - WEBUI_PORT=20216 # Internal only - do not change
+    network_mode: "service:gluetun"
+    depends_on:
+      - gluetun
+
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:4.0.16
+    container_name: sonarr
+    hostname: sonarr
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 150M
+        reservations:
+          cpus: '0.25'
+          memory: 100M
+    healthcheck:
+      test: curl -sSf http://localhost:8989/sonarr/ping || exit 1
+      interval: 1m
+      timeout: 15s
+      retries: 5
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=${TIMEZONE}
+      - SONARR__SERVER__URLBASE=/sonarr
+      - SONARR__POSTGRES__HOST=torrent-db
+      - SONARR__POSTGRES__PORT=5432
+      - SONARR__POSTGRES__USER=${POSTGRES_USER}
+      - SONARR__POSTGRES__PASSWORD=${POSTGRES_PASSWORD}
+      - SONARR__UPDATE__MECHANISM=Docker
+      - SONARR__AUTH__APIKEY=${SONARR_APIKEY}
+      - SONARR__LOG__LEVEL=info
+    volumes:
+      - sonarr_config:/config
+      - ${PATH_TO_DATA}:/data
+    depends_on:
+      torrent-db:
+        condition: service_healthy
+        restart: true
+
+  radarr:
+    image: lscr.io/linuxserver/radarr:6.0.4-nightly
+    container_name: radarr
+    hostname: radarr
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 150M
+        reservations:
+          cpus: '0.25'
+          memory: 100M
+    healthcheck:
+      test: curl -sSf http://localhost:7878/radarr/ping || exit 1
+      interval: 1m
+      timeout: 15s
+      retries: 5
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=${TIMEZONE}
+      - RADARR__SERVER__URLBASE=/radarr
+      - RADARR__POSTGRES__HOST=torrent-db
+      - RADARR__POSTGRES__PORT=5432
+      - RADARR__POSTGRES__USER=${POSTGRES_USER}
+      - RADARR__POSTGRES__PASSWORD=${POSTGRES_PASSWORD}
+      - RADARR__UPDATE__MECHANISM=Docker
+      - RADARR__AUTH__APIKEY=${RADARR_APIKEY}
+      - RADARR__LOG__LEVEL=info
+    volumes:
+      - ${PATH_TO_DATA}:/data
+      - radarr_config:/config
+    depends_on:
+      torrent-db:
+        condition: service_healthy
+        restart: true
+
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr:2.2.0-nightly
+    container_name: prowlarr
+    hostname: prowlarr
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 150M
+        reservations:
+          cpus: '0.25'
+          memory: 100M
+    healthcheck:
+      test: curl -sSf http://localhost:9696/prowlarr/ping || exit 1
+      interval: 1m
+      timeout: 15s
+      retries: 5
+    volumes:
+      - prowlarr_config:/config
+      - ${PATH_TO_DATA}/media:/media/
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=${TIMEZONE}
+      - PROWLARR__SERVER__URLBASE=/prowlarr
+      - PROWLARR__POSTGRES__HOST=torrent-db
+      - PROWLARR__POSTGRES__PORT=5432
+      - PROWLARR__POSTGRES__USER=${POSTGRES_USER}
+      - PROWLARR__POSTGRES__PASSWORD=${POSTGRES_PASSWORD}
+      - PROWLARR__UPDATE__MECHANISM=Docker
+      - PROWLARR__AUTH__APIKEY=${PROWLARR_APIKEY}
+      - PROWLARR__LOG__LEVEL=info
+    depends_on:
+      torrent-db:
+        condition: service_healthy
+        restart: true
+
+  bazarr:
+    image: lscr.io/linuxserver/bazarr:1.5.3
+    container_name: bazarr
+    hostname: bazarr
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 150M
+        reservations:
+          cpus: '0.25'
+          memory: 100M
+    healthcheck:
+      test: curl -sSf http://localhost:6767/api/system/status?apikey=35c45ed6d3b04c75c84800e6d60b1145 || exit 1
+      interval: 1m
+      timeout: 15s
+      retries: 5
+    volumes:
+      - bazarr_config:/config
+      - ./files/bazarr/config.yaml:/config/config/config.yaml
+      - ${PATH_TO_DATA}/media:/data/media
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=${TIMEZONE}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=bazarr
+    depends_on:
+      torrent-db:
+        condition: service_healthy
+        restart: true
+
+  # Currently not working !!
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:v3.4.3
+    container_name: flaresolverr
+    hostname: flaresolverr
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 150M
+        reservations:
+          cpus: '0.25'
+          memory: 100M
+    healthcheck:
+      test: curl -sSf http://localhost:8191/health || exit 1
+      interval: 2m30s
+      timeout: 15s
+      retries: 5
+    environment:
+      - LOG_LEVEL=debug
+      - LOG_HTML=false
+      - CAPTCHA_SOLVER=none
+      - TZ=${TIMEZONE}
+
+  nginx:
+    image: nginx:1.29.3-alpine
+    container_name: torrent-proxy
+    hostname: torrent-proxy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 50M
+        reservations:
+          cpus: '0.25'
+          memory: 25M
+    healthcheck:
+      test: curl -fSs http://localhost/health || exit 1
+      interval: 30s
+      timeout: 15s
+      retries: 5
+    volumes:
+    - ./files/nginx/default.conf:/etc/nginx/conf.d/default.conf
+    - ./files/nginx/nginx.conf:/etc/nginx/nginx.conf
+    - ./files/nginx/index.html:/etc/nginx/html/index.html
+    ports:
+    - ${SERVER_PORT}:80
+    environment:
+    - NGINX_HOST=${SERVER_HOST} # Can be one or multiple host names separated by commas
+    - NGINX_PORT=80
+
+  torrent-db:
+    image: postgres:14.0
+    container_name: torrent-db
+    hostname: torrent-db
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 75M
+        reservations:
+          cpus: '0.25'
+          memory: 50M
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -d bazarr -U $${POSTGRES_USER}" ] # Wait until the last database is created
+      interval: 1m30s
+      timeout: 15s
+      retries: 10
+    ports:
+      - 5432:5432
+    environment:
+      - POSTGRES_DB=default-db
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_volume:/var/lib/postgresql/data
+      - ./files/postgres/init-db.sh:/docker-entrypoint-initdb.d/init-db.sh # Create Sonarr/Radarr/Bazarr databases
+
+volumes:
+  qbittorrent_config:
+  gluetun_volume:
+  bazarr_config:
+  sonarr_config:
+  radarr_config:
+  prowlarr_config:
+  postgres_volume:
+    external: true
