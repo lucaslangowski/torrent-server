@@ -19,7 +19,7 @@ Requirements:
 - Linux
 - Curl
 - Docker
-- An external docker network called `postgres_volume`
+- An external docker volume called `postgres_volume`
 - Current user must have R W X privileges on all files/folders of this project
 - File and folder structure as described below
 - VPN (NordVPN, ProtonVPN...)
